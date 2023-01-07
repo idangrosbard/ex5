@@ -101,7 +101,15 @@ int connect_to_server(char * server_ip, uint32_t server_port) {
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(server_port);
-    serv_addr.sin_addr.s_addr = inet_pton(server_ip);
+    status = inet_pton(AF_INET, server_ip, &serv_addr.sin_addr);
+    if (status <= 0) {
+        if (status == 0) {
+            printf("%s\n", strerror(EINVAL));
+        } else {
+            printf("%s\n", strerror(errno));
+        }
+        exit(1);
+    }
 
     // create socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);

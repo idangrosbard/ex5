@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <assert.h>
+#include <signal.h>
 
 #define PRINT_CHAR_MIN 32
 #define PRINT_CHAR_MAX 126
@@ -27,10 +28,9 @@ void signal_handler(int signum) {
 /// @param buff_size Size of the buffer (i.e. number of bytes)
 /// @param pcc_session Array of counters for the current session
 void scan_buffer(uint8_t* buff, uint32_t buff_size, uint32_t* pcc_session) {
-    uint32_t i, readable_count = 0;
+    uint32_t i;
     for (i = 0; i < buff_size; i++) {
         if ((PRINT_CHAR_MIN <= buff[i]) && (buff[i] <= PRINT_CHAR_MAX)) {
-            readable_count++;
             pcc_session[buff[i] - PRINT_CHAR_MIN]++;
         }
     }
@@ -41,13 +41,13 @@ void scan_buffer(uint8_t* buff, uint32_t buff_size, uint32_t* pcc_session) {
 /// @param N Total number of bytes to read from the client
 /// @return Pointer to the array of counters for the current session. On error, returns NULL
 uint32_t * scan_input(int connfd, int N) {
-    uint32_t buff_size = MAX_BUFF_LEN, bytes_read = 0, total_printable = 0, i;
+    uint32_t buff_size = MAX_BUFF_LEN, bytes_read = 0;
     uint32_t * pcc_session;
     uint8_t * read_buff;
     
     pcc_session = malloc(sizeof(uint32_t) * (PRINT_CHAR_MAX - PRINT_CHAR_MIN + 1));
     if (pcc_session == NULL) {
-        fprintf(stderr, "%s\n", stderror(errno));
+        fprintf(stderr, "%s\n", strerror(errno));
         exit(1);
     }
     memset(pcc_session, 0, sizeof(uint32_t) * (PRINT_CHAR_MAX - PRINT_CHAR_MIN + 1));
@@ -61,21 +61,21 @@ uint32_t * scan_input(int connfd, int N) {
         // Read the buffer
         read_buff = malloc(buff_size);
         if (read_buff == NULL) {
-            fprintf(stderr, "%s\n", stderror(errno));
+            fprintf(stderr, "%s\n", strerror(errno));
             free(pcc_session);
             exit(1);
         }
         bytes_read = read(connfd, read_buff, buff_size);
         if (bytes_read != buff_size) {
             // If there was a TCP error we skip the current transaction
-            fprintf(stderr, "%s\n", stderror(errno));
+            fprintf(stderr, "%s\n", strerror(errno));
             free(read_buff);
             free(pcc_session);
 
             return NULL;
         }
         // Scan the buffer
-        scan_buffer(read_buff, buff_size);
+        scan_buffer(read_buff, buff_size, pcc_session);
         free(read_buff);
         N -= bytes_read;
     }
@@ -95,8 +95,16 @@ void server_loop(int listenfd) {
         // Connect with the client
         connfd = accept(listenfd, (struct sockaddr*)NULL, NULL);
         if (connfd < 0) {
-            fprintf(stderr, "%s\n", stderror(errno));
-            if ((errno != ETIMEDOUT) && (errno != ECONNRESET) && (errno != EPIPE)) {
+            fprintf(stderr, "%s\n", strerror(errno));
+            if (errno == EINTR) {
+                // Quit on SIGINT
+                break;
+            }
+            if ((errno == ETIMEDOUT) && (errno == ECONNRESET) && (errno == EPIPE)) {
+                // Ignore TCP errors
+                continue;
+            }
+            else {
                 exit(1);
             }
         }
@@ -105,7 +113,7 @@ void server_loop(int listenfd) {
         transaction_bytes = read(connfd, &N, sizeof(N));
         if (transaction_bytes != sizeof(N)) {
             // If there was a TCP error we skip the current transaction
-            fprintf(stderr, "%s\n", stderror(errno));
+            fprintf(stderr, "%s\n", strerror(errno));
             continue;
         }
         N = ntohl(N);
@@ -126,9 +134,11 @@ void server_loop(int listenfd) {
         total_printable = htonl(total_printable);
         transaction_bytes = write(connfd, &total_printable, sizeof(total_printable));
         if (transaction_bytes != sizeof(total_printable)) {
-            fprintf(stderr, "%s\n", stderror(errno));
+            fprintf(stderr, "%s\n", strerror(errno));
             free(pcc_session);
-            if ((errno != ETIMEDOUT) && (errno != ECONNRESET) && (errno != EPIPE)) {
+            if ((errno == ETIMEDOUT) && (errno == ECONNRESET) && (errno == EPIPE)) {
+                continue;
+            } else {
                 exit(1);
             }
         } else {
@@ -151,28 +161,20 @@ void print_exit() {
     }
 }
 
-int main(int argc, char** argv) {
-    uint16_t port;
-    int listenfd = 0, connfd = 0;
+/// @brief Setup the server to listen to connections
+/// @param port Port to listen to
+/// @return the socket FD
+int setup_server(uint16_t port) {
+    int listenfd = 0, enable = 1;;
     struct sockaddr_in serv_addr;
-    if argc != 2 {
-        fprintf(stderr, "%s\n", stderror(EINVAL));
-        exit(1);
-    }
-
-    port = atoi(argv[1]);
-    if (port <= 1024) {
-        fprintf(stderr, "%s\n", stderror(EINVAL));
-        exit(1);
-    }
-
+    socklen_t addrsize = sizeof(struct sockaddr_in );
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
 
     // We set SO_REUSEADDR to allow the server to restart without waiting for
     // the port to be released by the OS.
-    int enable = 1;
+    
     if (0 != setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable))) {
-        fprintf(stderr, "%s\n", stderror(errno));
+        fprintf(stderr, "%s\n", strerror(errno));
         exit(1);
     }
 
@@ -183,12 +185,12 @@ int main(int argc, char** argv) {
     serv_addr.sin_port = htons(port);
 
     if (0 != bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))) {
-        fprintf(stderr, "%s\n", stderror(errno));
+        fprintf(stderr, "%s\n", strerror(errno));
         exit(1);
     }
 
     if (0 != listen(listenfd, 10)) {
-        fprintf(stderr, "%s\n", stderror(errno));
+        fprintf(stderr, "%s\n", strerror(errno));
         exit(1);
     }
 
@@ -198,9 +200,29 @@ int main(int argc, char** argv) {
     };
     sigaction(SIGINT, &handler, NULL);
 
+    return listenfd;
+}
+
+int main(int argc, char** argv) {
+    uint16_t port;
+    int sockfd = -1;
+    
+    if (argc != 2) {
+        fprintf(stderr, "%s\n", strerror(EINVAL));
+        exit(1);
+    }
+
+    port = atoi(argv[1]);
+    if (port <= 1024) {
+        fprintf(stderr, "%s\n", strerror(EINVAL));
+        exit(1);
+    }
+
+    sockfd = setup_server(port);
+    
     memset(pcc_total, 0, sizeof(pcc_total));
     
-    server_loop(listenfd);
+    server_loop(sockfd);
 
     print_exit();
     
