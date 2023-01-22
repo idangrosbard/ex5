@@ -54,6 +54,7 @@ uint32_t * scan_input(int connfd, int N) {
 
     // As long as there bytes in the input
     while(N > 0) {
+        printf("N");
         // Set buffer size
         if (buff_size > N) {
             buff_size = N;
@@ -114,6 +115,7 @@ void server_loop(int listenfd) {
         if (transaction_bytes != sizeof(N)) {
             // If there was a TCP error we skip the current transaction
             fprintf(stderr, "%s\n", strerror(errno));
+            close(connfd);
             continue;
         }
         N = ntohl(N);
@@ -123,6 +125,7 @@ void server_loop(int listenfd) {
 
         if (pcc_session == NULL) {
             // If there was a TCP error we skip the current transaction
+            close(connfd);
             continue;
         }
         // Update the total count
@@ -136,10 +139,14 @@ void server_loop(int listenfd) {
         if (transaction_bytes != sizeof(total_printable)) {
             fprintf(stderr, "%s\n", strerror(errno));
             free(pcc_session);
-            if ((errno == ETIMEDOUT) && (errno == ECONNRESET) && (errno == EPIPE)) {
-                continue;
-            } else {
-                exit(1);
+            if (transaction_bytes < 0) {
+                if ((errno == ETIMEDOUT) && (errno == ECONNRESET) && (errno == EPIPE)) {
+                    close(connfd);
+                    continue;
+                } else {
+                    close(connfd);
+                    exit(1);
+                }
             }
         } else {
             // If everything went well, update the global count

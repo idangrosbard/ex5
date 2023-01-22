@@ -18,7 +18,7 @@
 /// @param file_path Path to the file to send
 void send_file(int sockfd, char * file_path) {
     FILE * read_file;
-    uint32_t N = 0, bytes_read = 0, bytes_sent = 0, curr_buffer_size = MAX_BUFFER_SIZE;
+    uint32_t N = 0, bytes_read = 0, bytes_sent = 0, curr_buffer_size = MAX_BUFFER_SIZE, net_N;
     int status = -1;
     char * buffer;
 
@@ -33,11 +33,13 @@ void send_file(int sockfd, char * file_path) {
     fseek(read_file, 0, SEEK_END);
     N = (uint32_t)ftell(read_file);
     fseek(read_file, 0, SEEK_SET);
-
+    
     // send file size
-    status = write(sockfd, &N, sizeof(N));
-    if (status < 0) {
+    net_N = htonl(N);
+    bytes_sent = write(sockfd, &net_N, sizeof(net_N));
+    if (bytes_sent != sizeof(net_N)) {
         fprintf(stderr, "%s\n", strerror(errno));
+        close(sockfd);
         exit(1);
     }
 
@@ -52,6 +54,7 @@ void send_file(int sockfd, char * file_path) {
         buffer = malloc(sizeof(char) * curr_buffer_size);
         if (buffer == NULL) {
             fprintf(stderr, "%s\n", strerror(errno));
+            close(sockfd);
             exit(1);
         }
         
@@ -59,13 +62,16 @@ void send_file(int sockfd, char * file_path) {
         bytes_read = fread(buffer, sizeof(char), curr_buffer_size, read_file);
         if (bytes_read != curr_buffer_size) {
             fprintf(stderr, "%s\n", strerror(errno));
+            close(sockfd);
             exit(1);
         }
 
         // send to server
         bytes_sent = write(sockfd, buffer, bytes_read);
+        
         if (bytes_sent != bytes_read) {
             fprintf(stderr, "%s\n", strerror(errno));
+            close(sockfd);
             exit(1);
         }
         free(buffer);
@@ -83,8 +89,11 @@ void get_printable_count(int sockfd) {
     
     if (bytes_read != sizeof(readable_count)) {
         fprintf(stderr, "%s\n", strerror(errno));
+        close(sockfd);
         exit(1);
     }
+
+    readable_count = ntohl(readable_count);
     printf("%d\n", readable_count);
 }
 
@@ -104,9 +113,9 @@ int connect_to_server(char * server_ip, uint32_t server_port) {
     status = inet_pton(AF_INET, server_ip, &serv_addr.sin_addr);
     if (status <= 0) {
         if (status == 0) {
-            printf("%s\n", strerror(EINVAL));
+            fprintf(stderr, "%s\n", strerror(EINVAL));
         } else {
-            printf("%s\n", strerror(errno));
+            fprintf(stderr, "%s\n", strerror(errno));
         }
         exit(1);
     }
@@ -114,14 +123,14 @@ int connect_to_server(char * server_ip, uint32_t server_port) {
     // create socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if(sockfd < 0) {
-        printf("%s\n", strerror(errno));
+        fprintf(stderr, "%s\n", strerror(errno));
         exit(1);
     }
 
     // connect to server
     status = connect(sockfd, (struct sockaddr*) &serv_addr, sizeof(serv_addr));
     if(status < 0) {
-        printf("%s\n", strerror(errno));
+        fprintf(stderror, "%s\n", strerror(errno));
         exit(1);
     }
 
