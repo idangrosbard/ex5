@@ -19,7 +19,6 @@
 void send_file(int sockfd, char * file_path) {
     FILE * read_file;
     uint32_t N = 0, bytes_read = 0, bytes_sent = 0, curr_buffer_size = MAX_BUFFER_SIZE, net_N;
-    int status = -1;
     char * buffer;
 
     // open file
@@ -130,7 +129,7 @@ int connect_to_server(char * server_ip, uint32_t server_port) {
     // connect to server
     status = connect(sockfd, (struct sockaddr*) &serv_addr, sizeof(serv_addr));
     if(status < 0) {
-        fprintf(stderror, "%s\n", strerror(errno));
+        fprintf(stderr, "%s\n", strerror(errno));
         exit(1);
     }
 
